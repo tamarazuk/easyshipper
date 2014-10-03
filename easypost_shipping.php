@@ -1,6 +1,40 @@
-<?
+<?php
 require_once('lib/easypost-php/lib/easypost.php');
-class WC_EasyPost extends WC_Shipping_Method {
+
+
+    add_action('woocommerce_product_options_shipping', 'add_pricing_input');
+
+    add_action('save_post', 'set_customs_value');
+
+
+    function add_pricing_input($content)
+    {
+       global $post;
+       woocommerce_wp_text_input(array(
+           'id'    => '_customs_value', 
+           'class' => 'short', 
+           'name'  => 'wc_customs_value', 
+           'type'  => 'number',
+           'label' => __( 'Customs Value', 'woocommerce' ), 
+          )
+       );
+    }
+
+    function set_customs_value($post)
+    {
+        error_log(var_export($_POST,1));
+        if($_POST['wc_customs_value']){
+                add_post_meta($_POST['post_ID'], '_customs_value', $_POST['wc_customs_value']);
+        }
+    }
+
+
+
+
+
+
+
+class ES_WC_EasyPost extends WC_Shipping_Method {
   function __construct() {
     $this->id = 'easypost';
     $this->has_fields      = true;
@@ -12,6 +46,9 @@ class WC_EasyPost extends WC_Shipping_Method {
     $this->usesandboxapi      = strcmp($this->settings['test'], 'yes') == 0;
     $this->testApiKey 		    = $this->settings['test_api_key'  ];
     $this->liveApiKey 		    = $this->settings['live_api_key'  ];
+    $this->handling 		    = $this->settings['handling'] ? $this->settings['handling'] : 0;
+    $this->filters            = explode(",", $this->settings['filter_rates']);
+error_log($this->settings['filter_rates']);
     $this->secret_key         = $this->usesandboxapi ? $this->testApiKey : $this->liveApiKey;
 
     \EasyPost\EasyPost::setApiKey($this->secret_key);
@@ -20,6 +57,7 @@ class WC_EasyPost extends WC_Shipping_Method {
     
     add_action('woocommerce_update_options_shipping_' . $this->id , array($this, 'process_admin_options'));
     add_action('woocommerce_checkout_order_processed', array(&$this, 'purchase_order' ));
+    error_log('c');
   
   }
   public function init_form_fields()
@@ -31,6 +69,13 @@ class WC_EasyPost extends WC_Shipping_Method {
         'label' => __( 'Enabled', 'woocommerce' ),
         'default' => 'yes'
       ),
+      'filter_rates' => array(
+        'title' => __( 'Filter these rates', 'woocommerce' ),
+        'type' => 'text',
+        'label' => __( 'Fitler (Comma Seperated)', 'woocommerce' ),
+        'default' => ('LibraryMail,MediaMail'),
+      ),
+
       'test' => array(
         'title' => __( 'Test Mode', 'woocommerce' ),
         'type' => 'checkbox',
@@ -49,7 +94,12 @@ class WC_EasyPost extends WC_Shipping_Method {
         'label' => __( 'Live Api Key', 'woocommerce' ),
         'default' => ''
       ),
-
+      'handling' => array(
+        'title' => "Handling Charge",
+        'type' => 'text',
+        'label' => __( 'Handling Charge', 'woocommerce' ),
+        'default' => '0'
+      ),
       'company' => array(
         'title' => "Company",
         'type' => 'text',
@@ -164,18 +214,27 @@ class WC_EasyPost extends WC_Shipping_Method {
         $rate = array(
           'id' => sprintf("%s-%s|%s", $r->carrier, $r->service, $shipment->id),
           'label' => sprintf("%s %s", $r->carrier , $r->service),
-          'cost' => $r->rate,
+          'cost' => $r->rate + $this->handling,
           'calc_tax' => 'per_item'
         );
-        // Register the rate
-        $this->add_rate( $rate );
+
+        $filter_out = !empty($this->filters) ? $this->filters : array('LibraryMail', 'MediaMail');
+        error_log(var_export($filter_out,1));
+        {
+          if (!in_array($r->service, $filter_out)) 
+          {
+            // Register the rate
+            $this->add_rate( $rate );
+          }
+        } 
+
         }
       } 
       catch(Exception $e)
       {
         // EasyPost Error - Lets Log.
         error_log(var_export($e,1));
-        mail('seanvoss@gmail.com', 'Error from WordPress - EasyPost', var_export($e,1));
+        //mail('seanvoss@gmail.com', 'Error from WordPress - EasyPost', var_export($e,1));
 
       }
   }
@@ -184,22 +243,31 @@ class WC_EasyPost extends WC_Shipping_Method {
   {
     try
     {
+       global $woocommerce;
+
+      $chosen_shipping_methods = $woocommerce->session->get( 'chosen_shipping_methods' );
+      error_log(var_export($chosen_shipping_methods,1));
       $order        = &new WC_Order($order_id);
       $shipping     = $order->get_shipping_address();
-      if($ship_arr = explode('|',$order->shipping_method))
+
+      $method = $order->get_shipping_methods();
+      $method = array_values($method);
+      $shipping_method = $method[0]['method_id'];
+      $ship_arr = explode('|',$shipping_method);
+      if(count($ship_arr) >= 2)
       {
 
         $shipment = \EasyPost\Shipment::retrieve(array('id' => $ship_arr[1]));
         $shipment->to_address->name = sprintf("%s %s", $order->shipping_first_name, $order->shipping_last_name);
         $shipment->to_address->phone = $order->billing_phone;
         $parcel = \EasyPost\Parcel::create(
-            array(
-                 "length"             => $shipment->parcel->length,
-                 "width"              => $shipment->parcel->width,
-                 "height"             => $shipment->parcel->height,
-                 "predefined_package" => null,
-                 "weight"             => $shipment->parcel->weight,
-            )
+          array(
+               "length"             => $shipment->parcel->length,
+               "width"              => $shipment->parcel->width,
+               "height"             => $shipment->parcel->height,
+               "predefined_package" => null,
+               "weight"             => $shipment->parcel->weight,
+          )
         );
         $from_address = \EasyPost\Address::create(
           array(
@@ -255,12 +323,14 @@ class WC_EasyPost extends WC_Shipping_Method {
     }
     catch(Exception $e)
     {
-      mail('seanvoss@gmail.com', 'Error from WordPress - EasyPost', var_export($e,1));
+      //mail('seanvoss@gmail.com', 'Error from WordPress - EasyPost', var_export($e,1));
     }
   }
+
+
 }
 function add_easypost_method( $methods ) {
-  $methods[] = 'WC_EasyPost'; return $methods;
+  $methods[] = 'ES_WC_EasyPost'; return $methods;
 }
 
 add_filter('woocommerce_shipping_methods',         'add_easypost_method' );

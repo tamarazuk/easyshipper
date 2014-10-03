@@ -1,9 +1,9 @@
 <?php
 /*
-Plugin Name: EasyPost
+Plugin Name: EasyShipper
 Plugin URI: http://seanvoss.com/easypost
 Description: Provides an integration for EasyPost for woo-commerece.
-Version: 0.1
+Version: 0.5
 Author: Sean Voss
 Author URI: http://seanvoss.com/easypost
 
@@ -32,9 +32,9 @@ if ( in_array( 'woocommerce/woocommerce.php', apply_filters( 'active_plugins', g
 
 
 
-add_action( 'add_meta_boxes', 'add_boxes');
+add_action( 'add_meta_boxes', 'es_add_boxes');
 
-function add_boxes(){
+function es_add_boxes(){
 
  add_meta_box( 'easypost_data', __( 'EastPost', 'woocommerce' ), 'woocommerce_easypost_meta_box', 'shop_order', 'normal', 'low' );
 
